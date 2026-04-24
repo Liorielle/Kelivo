@@ -36,29 +36,36 @@ app.post('/v1/chat/completions', async (req, res) => {
         }, { headers: { 'Authorization': `Bearer ${AI_API_KEY}` } });
         const userVector = `[${embedRes.data.data[0].embedding.join(',')}]`;
 
-        // 3. 【左脑】Ombre 检索 (换了正确的房间门牌号 /api/search)
+        // 3. 【左脑】Ombre 检索 (破案版：门牌号 /api/search，手势 GET)
         let ombreFacts = "";
         try {
             if (OMBRE_URL) {
                 const cleanUrl = OMBRE_URL.replace(/\/$/, "");
                 console.log(`🔍 正在尝试连接 Ombre: ${cleanUrl}/api/search`);
-                const ombreRes = await axios.post(`${cleanUrl}/api/search`, {
-                    text: lastUserMessage,
-                    limit: 3
-                }, { 
+                
+                // 🔧 关键修改：改成 axios.get，参数放在 params 里
+                const ombreRes = await axios.get(`${cleanUrl}/api/search`, {
+                    params: {
+                        q: lastUserMessage,      // 广撒网：有的作者用 q
+                        text: lastUserMessage,   // 广撒网：有的作者用 text
+                        limit: 3
+                    },
                     headers: { 'Authorization': `Bearer ${OMBRE_API_KEY}` },
                     timeout: 5000 
                 });
                 
-                if (ombreRes.data && ombreRes.data.length > 0) {
+                // 兼容不同的数据返回格式
+                let resultsArray = Array.isArray(ombreRes.data) ? ombreRes.data : (ombreRes.data.data || ombreRes.data.results || []);
+                if (resultsArray.length > 0) {
                     ombreFacts = "\n<Ombre 历史事实>\n" + 
-                                 ombreRes.data.map(item => item.content).join("\n") + 
+                                 resultsArray.map(item => item.content || item.text || JSON.stringify(item)).join("\n") + 
                                  "\n</Ombre 历史事实>\n";
                 }
             }
         } catch (e) { 
-            console.error("❌ Ombre 搬运失败，原因:", e.response ? JSON.stringify(e.response.data) || e.response.status : e.message); 
+            console.error("❌ Ombre 搬运失败，原因:", e.response ? (JSON.stringify(e.response.data) || e.response.status) : e.message); 
         }
+
 
         // 4. 【右脑】SQL 记忆检索
         let vipFacts = "";
