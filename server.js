@@ -36,18 +36,18 @@ app.post('/v1/chat/completions', async (req, res) => {
         }, { headers: { 'Authorization': `Bearer ${AI_API_KEY}` } });
         const userVector = `[${embedRes.data.data[0].embedding.join(',')}]`;
 
-        // 3. 【左脑】Ombre 检索
+        // 3. 【左脑】Ombre 检索 (换了正确的房间门牌号 /api/search)
         let ombreFacts = "";
         try {
             if (OMBRE_URL) {
-                const cleanUrl = OMBRE_URL.replace(/\/$/, ""); // 自动删掉末尾斜杠
-                console.log(`🔍 正在尝试连接 Ombre: ${cleanUrl}/search`);
-                const ombreRes = await axios.post(`${cleanUrl}/search`, {
+                const cleanUrl = OMBRE_URL.replace(/\/$/, "");
+                console.log(`🔍 正在尝试连接 Ombre: ${cleanUrl}/api/search`);
+                const ombreRes = await axios.post(`${cleanUrl}/api/search`, {
                     text: lastUserMessage,
                     limit: 3
                 }, { 
                     headers: { 'Authorization': `Bearer ${OMBRE_API_KEY}` },
-                    timeout: 5000 // 5秒超时，防止拖慢整体速度
+                    timeout: 5000 
                 });
                 
                 if (ombreRes.data && ombreRes.data.length > 0) {
@@ -57,11 +57,10 @@ app.post('/v1/chat/completions', async (req, res) => {
                 }
             }
         } catch (e) { 
-            // 🔧 关键改进：打印 Ombre 失败的具体原因
-            console.error("❌ Ombre 搬运失败，原因:", e.response ? JSON.stringify(e.response.data) : e.message); 
+            console.error("❌ Ombre 搬运失败，原因:", e.response ? JSON.stringify(e.response.data) || e.response.status : e.message); 
         }
 
-        // 4. 【右脑】SQL 记忆检索 (保持不变)
+        // 4. 【右脑】SQL 记忆检索
         let vipFacts = "";
         try {
             const factRes = await pool.query(`SELECT content FROM rhys_facts ORDER BY embedding <-> $1 LIMIT 2;`, [userVector]);
@@ -78,16 +77,24 @@ app.post('/v1/chat/completions', async (req, res) => {
             }
         } catch (e) { console.error("❌ SQL 原话打捞失败:", e.message); }
 
-        // 5. 最终合体发送
+        // 5. 最终合体发送：智能分流！
         const finalSystemPrompt = systemPrompt + ombreFacts + vipFacts + historyMemory;
-        const outMessages = [{ role: "system", content: finalSystemPrompt }, ...userMessages];
+        const requestedModel = req.body.model || "claude-opus-4-5";
 
-        const chatPayload = {
-            model: req.body.model || "claude-3-5-sonnet-20240620",
-            messages: outMessages,
+        let chatPayload = {
+            model: requestedModel,
             temperature: req.body.temperature || 0.7, 
             stream: false
         };
+
+        // 🌟 核心魔法：如果是 Claude，就把设定塞进单独的 VIP 座位
+        if (requestedModel.toLowerCase().includes('claude')) {
+            chatPayload.system = finalSystemPrompt; 
+            chatPayload.messages = userMessages; 
+        } else {
+            // 如果是 DeepSeek 或 OpenAI，就和以前一样挤公交
+            chatPayload.messages = [{ role: "system", content: finalSystemPrompt }, ...userMessages];
+        }
 
         const chatRes = await axios.post(`${AI_BASE_URL}/chat/completions`, chatPayload, { 
             headers: { 'Authorization': `Bearer ${AI_API_KEY}` } 
@@ -96,7 +103,6 @@ app.post('/v1/chat/completions', async (req, res) => {
         res.json(chatRes.data);
 
     } catch (error) {
-        // 🔧 终极诊断：如果 AI 服务商报错，把对方的原话打印出来
         if (error.response) {
             console.error("🚨 AI服务商拒绝了请求，错误详情:", JSON.stringify(error.response.data));
         } else {
