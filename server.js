@@ -51,7 +51,7 @@ app.post('/v1/chat/completions', async (req, res) => {
                         limit: 3
                     },
                     headers: { 'Authorization': `Bearer ${OMBRE_API_KEY}` },
-                    timeout: 5000 
+                    timeout: 20000 
                 });
                 
                 // 兼容不同的数据返回格式
