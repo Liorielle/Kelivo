@@ -84,7 +84,6 @@ app.post('/v1/chat/completions', async (req, res) => {
             model: req.body.model || "claude-3-5-sonnet-20240620",
             messages: outMessages,
             temperature: req.body.temperature || 0.7,
-            max_tokens: 4096, // 🔧 专治 Claude 的特效药：必须指定最大字数
             stream: false
         }, { headers: { 'Authorization': `Bearer ${AI_API_KEY}` } });
 
