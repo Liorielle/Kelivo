@@ -100,7 +100,7 @@ try {
                 limit: 3
             },
             headers: headers,
-            timeout: 5000
+            timeout: 15000
         });
         
         ombreFacts = ombreRes.data.map(b => b.content_preview || b.content).join("\n---\n");
