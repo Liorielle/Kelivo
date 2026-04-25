@@ -9,67 +9,79 @@ app.use(cors());
 app.use(express.json());
 
 const AI_API_KEY = process.env.AI_API_KEY; 
-const DB_URL = process.env.DB_URL; 
+const DB_URL = process.env.DB_URL;
 const OMBRE_URL = process.env.OMBRE_URL; 
 const OMBRE_API_KEY = process.env.OMBRE_API_KEY || ""; 
+const OMBRE_PASSWORD = process.env.OMBRE_PASSWORD || ""; 
 
 const pool = new Pool({ connectionString: DB_URL });
 const AI_BASE_URL = "https://aihubmix.com/v1";
 
-app.post('/v1/chat/completions', async (req, res) => {
+// ==========================================
+// 🌟 新增器官 1：获取全局滚动记忆 (翻本子)
+// ==========================================
+async function getRollingMemory(pool) {
     try {
-        const userMessages = req.body.messages || [];
-        const lastUserMessage = userMessages.filter(m => m.role === 'user').pop().content;
+        const res = await pool.query(
+            'SELECT user_content, assistant_content FROM global_scrolling_memory ORDER BY created_at DESC LIMIT 15'
+        );
+        // 数据库取出来是最新的在前面，我们要翻转一下，让时间正向流动
+        const history = [];
+        res.rows.reverse().forEach(row => {
+            history.push({ role: 'user', content: row.user_content });
+            history.push({ role: 'assistant', content: row.assistant_content });
+        });
+        return history;
+    } catch (e) {
+        console.error("❌ 读取滚动记忆失败:", e.message);
+        return [];
+    }
+}
 
-        // 1. 获取灵魂设定
-        let systemPrompt = "你是一个AI助手。";
-        try {
-            systemPrompt = fs.readFileSync('./system_prompt.txt', 'utf8');
-        } catch (e) { 
-            console.error("❌ 读取本地 system_prompt.txt 失败:", e.message); 
-        }
+// ==========================================
+// 🌟 新增器官 2：保存并修剪滚动记忆 (记笔记并挤牙膏)
+// ==========================================
+async function saveRollingMemory(pool, userMsg, assistantMsg) {
+    try {
+        // 1. 存入新对话
+        await pool.query(
+            'INSERT INTO global_scrolling_memory (user_content, assistant_content) VALUES ($1, $2)',
+            [userMsg, assistantMsg]
+        );
+        // 2. 淘汰最老的记录，只保留最新的 15 轮
+        await pool.query(
+            'DELETE FROM global_scrolling_memory WHERE id NOT IN (SELECT id FROM global_scrolling_memory ORDER BY created_at DESC LIMIT 15)'
+        );
+    } catch (e) {
+        console.error("❌ 保存滚动记忆失败:", e.message);
+    }
+}
 
-        // 2. 语义坐标转换
-        const embedRes = await axios.post(`${AI_BASE_URL}/embeddings`, {
-            input: lastUserMessage,
-            model: "text-embedding-3-small"
-        }, { headers: { 'Authorization': `Bearer ${AI_API_KEY}` } });
-        const userVector = `[${embedRes.data.data[0].embedding.join(',')}]`;
-
-        // 3. 【左脑】Ombre 检索 (破案版：门牌号 /api/search，手势 GET)
-        const OMBRE_PASSWORD = process.env.OMBRE_PASSWORD || ""; 
-
-// 全局变量：存储 Ombre session cookie
+// ==========================================
+// 🔐 Ombre 登录 Session 维持逻辑 (保留令令的神仙操作)
+// ==========================================
 let ombreSessionCookie = null;
 let ombreSessionExpiry = 0;
 
-// 登录 Ombre 获取 session
 async function getOmbreSession() {
     const now = Date.now();
-    
-    // 如果 session 还没过期，直接返回
     if (ombreSessionCookie && now < ombreSessionExpiry) {
         return ombreSessionCookie;
     }
-    
     try {
         if (!OMBRE_URL || !OMBRE_PASSWORD) {
-            console.log("⚠️ Ombre 未配置，跳过登录");
+            console.log("⚠️ Ombre 密码未配置，跳过登录");
             return null;
         }
-        
         const cleanUrl = OMBRE_URL.replace(/\/$/, "");
         console.log(`🔐 正在登录 Ombre: ${cleanUrl}/auth/login`);
         
-        const loginRes = await axios.post(`${cleanUrl}/auth/login`, {
-            password: OMBRE_PASSWORD
-        });
-        
-        // 从响应头中获取 Set-Cookie
+        const loginRes = await axios.post(`${cleanUrl}/auth/login`, { password: OMBRE_PASSWORD });
         const setCookie = loginRes.headers['set-cookie'];
+        
         if (setCookie && Array.isArray(setCookie)) {
-            ombreSessionCookie = setCookie[0].split(';')[0]; // 提取 cookie 部分
-            ombreSessionExpiry = now + 7 * 24 * 60 * 60 * 1000; // 7天过期
+            ombreSessionCookie = setCookie[0].split(';')[0];
+            ombreSessionExpiry = now + 7 * 24 * 60 * 60 * 1000;
             console.log(`✅ Ombre 登录成功`);
             return ombreSessionCookie;
         }
@@ -79,37 +91,57 @@ async function getOmbreSession() {
     return null;
 }
 
-// 修改后的 Ombre 搜索调用
-let ombreFacts = "";
-try {
-    if (OMBRE_URL) {
-        const cleanUrl = OMBRE_URL.replace(/\/$/, "");
-        console.log(`🔍 正在尝试连接 Ombre: ${cleanUrl}/api/search`);
-        
-        // 先获取 session
-        const sessionCookie = await getOmbreSession();
-        
-        const headers = {};
-        if (sessionCookie) {
-            headers['Cookie'] = sessionCookie;
-        }
-        
-        const ombreRes = await axios.get(`${cleanUrl}/api/search`, {
-            params: {
-                q: lastUserMessage,
-                limit: 3
-            },
-            headers: headers,
-            timeout: 15000
-        });
-        
-        ombreFacts = ombreRes.data.map(b => b.content_preview || b.content).join("\n---\n");
-        console.log(`✅ Ombre 搬运成功: ${ombreFacts.length} 字符`);
-    }
-} catch (e) {
-    console.error(`❌ Ombre 搬运失败，原因: ${JSON.stringify(e.response?.data || e.message)}`);
-}
+// ==========================================
+// 🚀 核心大管家：处理聊天请求
+// ==========================================
+app.post('/v1/chat/completions', async (req, res) => {
+    try {
+        // 安全地获取用户最新一句话
+        const userMessages = req.body.messages || [];
+        const userMsgObjs = userMessages.filter(m => m.role === 'user');
+        const lastUserMessage = userMsgObjs.length > 0 ? userMsgObjs.pop().content : "继续";
 
+        // 1. 获取灵魂设定
+        let systemPrompt = "你是一个AI助手。";
+        try {
+            systemPrompt = fs.readFileSync('./system_prompt.txt', 'utf8');
+        } catch (e) { 
+            console.error("❌ 读取本地 system_prompt.txt 失败:", e.message); 
+        }
+
+        // 2. 语义坐标转换 (AIhubmix)
+        const embedRes = await axios.post(`${AI_BASE_URL}/embeddings`, {
+            input: lastUserMessage,
+            model: "text-embedding-3-small"
+        }, { headers: { 'Authorization': `Bearer ${AI_API_KEY}` } });
+        const userVector = `[${embedRes.data.data[0].embedding.join(',')}]`;
+
+        // 3. 【左脑】Ombre 检索 
+        let ombreFacts = "";
+        try {
+            if (OMBRE_URL) {
+                const cleanUrl = OMBRE_URL.replace(/\/$/, "");
+                console.log(`🔍 正在连接 Ombre: ${cleanUrl}/api/search`);
+                
+                const sessionCookie = await getOmbreSession();
+                const headers = {};
+                if (sessionCookie) { headers['Cookie'] = sessionCookie; }
+                
+                const ombreRes = await axios.get(`${cleanUrl}/api/search`, {
+                    params: { q: lastUserMessage, limit: 3 },
+                    headers: headers,
+                    timeout: 15000
+                });
+                
+                let resultsArray = Array.isArray(ombreRes.data) ? ombreRes.data : (ombreRes.data.data || ombreRes.data.results || []);
+                if (resultsArray.length > 0) {
+                    ombreFacts = "\n<Ombre 历史事实>\n" + resultsArray.map(item => item.content_preview || item.content || item.text).join("\n") + "\n</Ombre 历史事实>\n";
+                }
+                console.log(`✅ Ombre 搬运成功: ${ombreFacts.length} 字符`);
+            }
+        } catch (e) {
+            console.error(`❌ Ombre 搬运失败: ${e.response ? JSON.stringify(e.response.data) : e.message}`);
+        }
 
         // 4. 【右脑】SQL 记忆检索
         let vipFacts = "";
@@ -128,28 +160,36 @@ try {
             }
         } catch (e) { console.error("❌ SQL 原话打捞失败:", e.message); }
 
-        // 5. 最终合体发送：智能分流！
-        const finalSystemPrompt = systemPrompt + ombreFacts + vipFacts + historyMemory;
-        const requestedModel = req.body.model || "claude-opus-4-5";
-
-        let chatPayload = {
-            model: requestedModel,
-            temperature: req.body.temperature || 0.7, 
-            stream: false
-        };
-
-        // 🌟 核心魔法：如果是 Claude，就把设定塞进单独的 VIP 座位
-        if (requestedModel.toLowerCase().includes('claude')) {
-            chatPayload.system = finalSystemPrompt; 
-            chatPayload.messages = userMessages; 
+       // ==========================================
+        // 🌟 新增魔法：智能判断新旧窗口，决定是否注入 SQL 记忆
+        // ==========================================
+        // 剔除掉可能存在的 system 提示词，看看真正属于你们的对话有几条
+        const realChatCount = userMessages.filter(m => m.role !== 'system').length;
+        
+        let finalMessages = [];
+        
+        if (realChatCount === 1) {
+            // 【情况 A：新开空白窗口】
+            console.log("🆕 检测到新窗口！正在注入 SQL 全局跨窗记忆 (15轮)...");
+            const rollingMemory = await getRollingMemory(pool);
+            // 拼合：15 轮旧记忆 + 你的新一句话
+            finalMessages = [...rollingMemory, ...userMessages];
         } else {
-            // 如果是 DeepSeek 或 OpenAI，就和以前一样挤公交
-            chatPayload.messages = [{ role: "system", content: finalSystemPrompt }, ...userMessages];
+            // 【情况 B：原窗口继续聊天】
+            console.log(`♻️ 检测到原窗口连续聊天 (当前已带 ${realChatCount} 轮)。信任前端 30 轮记忆，为令令省 Token！`);
+            // 直接用 Kelivo 的记忆，不添加 SQL 记忆
+            finalMessages = userMessages;
         }
 
-        const chatRes = await axios.post(`${AI_BASE_URL}/chat/completions`, chatPayload, { 
-            headers: { 'Authorization': `Bearer ${AI_API_KEY}` } 
-        });
+        // ==========================================
+        // 🌟 新增魔法：把这次聊天记入全局小本本
+        // ==========================================
+        let assistantMessage = "";
+        if (chatRes.data && chatRes.data.choices && chatRes.data.choices.length > 0) {
+            assistantMessage = chatRes.data.choices[0].message.content;
+            // 记笔记！
+            await saveRollingMemory(pool, lastUserMessage, assistantMessage);
+        }
 
         res.json(chatRes.data);
 
