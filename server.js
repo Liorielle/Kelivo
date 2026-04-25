@@ -37,34 +37,78 @@ app.post('/v1/chat/completions', async (req, res) => {
         const userVector = `[${embedRes.data.data[0].embedding.join(',')}]`;
 
         // 3. 【左脑】Ombre 检索 (破案版：门牌号 /api/search，手势 GET)
-        let ombreFacts = "";
-        try {
-            if (OMBRE_URL) {
-                const cleanUrl = OMBRE_URL.replace(/\/$/, "");
-                console.log(`🔍 正在尝试连接 Ombre: ${cleanUrl}/api/search`);
-                
-                // 🔧 关键修改：改成 axios.get，参数放在 params 里
-                const ombreRes = await axios.get(`${cleanUrl}/api/search`, {
-                    params: {
-                        q: lastUserMessage,      // 广撒网：有的作者用 q
-                        text: lastUserMessage,   // 广撒网：有的作者用 text
-                        limit: 3
-                    },
-                    headers: { 'Authorization': `Bearer ${OMBRE_API_KEY}` },
-                    timeout: 20000 
-                });
-                
-                // 兼容不同的数据返回格式
-                let resultsArray = Array.isArray(ombreRes.data) ? ombreRes.data : (ombreRes.data.data || ombreRes.data.results || []);
-                if (resultsArray.length > 0) {
-                    ombreFacts = "\n<Ombre 历史事实>\n" + 
-                                 resultsArray.map(item => item.content || item.text || JSON.stringify(item)).join("\n") + 
-                                 "\n</Ombre 历史事实>\n";
-                }
-            }
-        } catch (e) { 
-            console.error("❌ Ombre 搬运失败，原因:", e.response ? (JSON.stringify(e.response.data) || e.response.status) : e.message); 
+        const OMBRE_PASSWORD = process.env.OMBRE_PASSWORD || ""; 
+
+// 全局变量：存储 Ombre session cookie
+let ombreSessionCookie = null;
+let ombreSessionExpiry = 0;
+
+// 登录 Ombre 获取 session
+async function getOmbreSession() {
+    const now = Date.now();
+    
+    // 如果 session 还没过期，直接返回
+    if (ombreSessionCookie && now < ombreSessionExpiry) {
+        return ombreSessionCookie;
+    }
+    
+    try {
+        if (!OMBRE_URL || !OMBRE_PASSWORD) {
+            console.log("⚠️ Ombre 未配置，跳过登录");
+            return null;
         }
+        
+        const cleanUrl = OMBRE_URL.replace(/\/$/, "");
+        console.log(`🔐 正在登录 Ombre: ${cleanUrl}/auth/login`);
+        
+        const loginRes = await axios.post(`${cleanUrl}/auth/login`, {
+            password: OMBRE_PASSWORD
+        });
+        
+        // 从响应头中获取 Set-Cookie
+        const setCookie = loginRes.headers['set-cookie'];
+        if (setCookie && Array.isArray(setCookie)) {
+            ombreSessionCookie = setCookie[0].split(';')[0]; // 提取 cookie 部分
+            ombreSessionExpiry = now + 7 * 24 * 60 * 60 * 1000; // 7天过期
+            console.log(`✅ Ombre 登录成功`);
+            return ombreSessionCookie;
+        }
+    } catch (e) {
+        console.error(`❌ Ombre 登录失败: ${e.message}`);
+    }
+    return null;
+}
+
+// 修改后的 Ombre 搜索调用
+let ombreFacts = "";
+try {
+    if (OMBRE_URL) {
+        const cleanUrl = OMBRE_URL.replace(/\/$/, "");
+        console.log(`🔍 正在尝试连接 Ombre: ${cleanUrl}/api/search`);
+        
+        // 先获取 session
+        const sessionCookie = await getOmbreSession();
+        
+        const headers = {};
+        if (sessionCookie) {
+            headers['Cookie'] = sessionCookie;
+        }
+        
+        const ombreRes = await axios.get(`${cleanUrl}/api/search`, {
+            params: {
+                q: lastUserMessage,
+                limit: 3
+            },
+            headers: headers,
+            timeout: 5000
+        });
+        
+        ombreFacts = ombreRes.data.map(b => b.content_preview || b.content).join("\n---\n");
+        console.log(`✅ Ombre 搬运成功: ${ombreFacts.length} 字符`);
+    }
+} catch (e) {
+    console.error(`❌ Ombre 搬运失败，原因: ${JSON.stringify(e.response?.data || e.message)}`);
+}
 
 
         // 4. 【右脑】SQL 记忆检索
