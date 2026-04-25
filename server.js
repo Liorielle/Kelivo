@@ -14,7 +14,17 @@ const OMBRE_URL = process.env.OMBRE_URL;
 const OMBRE_API_KEY = process.env.OMBRE_API_KEY || ""; 
 const OMBRE_PASSWORD = process.env.OMBRE_PASSWORD || ""; 
 
-const pool = new Pool({ connectionString: DB_URL });
+const pool = new Pool({ 
+    connectionString: DB_URL,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+});
+
+pool.on('error', (err) => {
+    console.error('❌ 数据库连接池错误:', err);
+});
+
 const AI_BASE_URL = "https://aihubmix.com/v1";
 
 // ==========================================
@@ -160,7 +170,7 @@ app.post('/v1/chat/completions', async (req, res) => {
             }
         } catch (e) { console.error("❌ SQL 原话打捞失败:", e.message); }
 
-       // ==========================================
+        // ==========================================
         // 🌟 新增魔法：智能判断新旧窗口，决定是否注入 SQL 记忆
         // ==========================================
         // 剔除掉可能存在的 system 提示词，看看真正属于你们的对话有几条
