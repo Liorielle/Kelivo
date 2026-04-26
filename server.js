@@ -142,9 +142,13 @@ app.post('/v1/chat/completions', async (req, res) => {
         // 4. 【右脑】SQL 记忆检索
         let vipFacts = "";
         try {
-            const factRes = await pool.query(`SELECT content FROM rhys_facts ORDER BY embedding <-> $1 LIMIT 2;`, [userVector]);
+            // 💡 包工头小改动：把 LIMIT 2 改成了 LIMIT 5，让他多捞一点！
+            const factRes = await pool.query(`SELECT content FROM rhys_facts ORDER BY embedding <-> $1 LIMIT 5;`, [userVector]);
             if (factRes.rows.length > 0) {
                 vipFacts = "\n<⚠️ Rhys必须遵守的禁忌>\n" + factRes.rows.map(r => r.content).join("\n") + "\n</⚠️>\n";
+                console.log(`✅ SQL金库打捞成功：抓到了 ${factRes.rows.length} 条设定！`); // 👈 让他汇报！
+            } else {
+                console.log(`⚠️ SQL金库翻过了，但没找到和这句话相关的设定。`); // 👈 没找到也让他说一声！
             }
         } catch (e) { console.error("❌ SQL VIP 打捞失败:", e.message); }
 
