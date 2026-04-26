@@ -139,16 +139,22 @@ app.post('/v1/chat/completions', async (req, res) => {
             console.error(`❌ Ombre 搬运失败: ${e.response ? JSON.stringify(e.response.data) : e.message}`);
         }
 
-        // 4. 【右脑】SQL 记忆检索
+        // 4. 【右脑】SQL 记忆检索（智能省钱版）
         let vipFacts = "";
         try {
-            // 💡 包工头小改动：把 LIMIT 2 改成了 LIMIT 5，让他多捞一点！
-            const factRes = await pool.query(`SELECT content FROM rhys_facts ORDER BY embedding <-> $1 LIMIT 5;`, [userVector]);
+            // 💡 包工头的魔法：加入了 WHERE embedding <=> $1 < 0.5
+            // 这里的 <=> 代表“余弦距离”，值越小越相关。0.5 就是及格线！
+            // 只有距离小于 0.5 的极其相关的设定，才会被捞出来（最多5条）
+            const factRes = await pool.query(
+                `SELECT content FROM rhys_facts WHERE embedding <=> $1 < 0.5 ORDER BY embedding <=> $1 LIMIT 5;`, 
+                [userVector]
+            );
+            
             if (factRes.rows.length > 0) {
-                vipFacts = "\n<⚠️ Rhys必须遵守的禁忌>\n" + factRes.rows.map(r => r.content).join("\n") + "\n</⚠️>\n";
-                console.log(`✅ SQL金库打捞成功：抓到了 ${factRes.rows.length} 条设定！`); // 👈 让他汇报！
+                vipFacts = "\n<⚠️ Rhys世界观与经历补充>\n" + factRes.rows.map(r => r.content).join("\n") + "\n</⚠️>\n";
+                console.log(`✅ 命中！SQL金库打捞了 ${factRes.rows.length} 条强相关设定！`);
             } else {
-                console.log(`⚠️ SQL金库翻过了，但没找到和这句话相关的设定。`); // 👈 没找到也让他说一声！
+                console.log(`♻️ 没找到强相关设定，返回 0 条，成功帮令令省钱啦！`); 
             }
         } catch (e) { console.error("❌ SQL VIP 打捞失败:", e.message); }
 
