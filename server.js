@@ -97,10 +97,12 @@ app.post('/v1/chat/completions', async (req, res) => {
         const userMsgObjs = userMessages.filter(m => m.role === 'user');
         const lastUserMessage = userMsgObjs.length > 0 ? userMsgObjs.pop().content : "继续";
 
-        // 1. 获取灵魂设定
+       // 1. 获取灵魂设定
         let systemPrompt = "你是一个AI助手。";
         try {
             systemPrompt = fs.readFileSync('./system_prompt.txt', 'utf8');
+            // 👇 包工头加的大喇叭在这里！
+            console.log(`✅ DNA加载完毕！成功读取 system_prompt.txt，共携带了 ${systemPrompt.length} 个字符的底层设定。`);
         } catch (e) { 
             console.error("❌ 读取本地 system_prompt.txt 失败:", e.message); 
         }
