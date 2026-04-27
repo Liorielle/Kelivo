@@ -18,6 +18,29 @@ const pool = new Pool({ connectionString: DB_URL });
 const AI_BASE_URL = "https://aihubmix.com/v1";
 
 // ==========================================
+// 🌟 新增器官：赛博偷窥镜 (网页链接抓取)
+// ==========================================
+async function fetchWebContent(text) {
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const urls = text.match(urlRegex);
+    
+    if (urls && urls.length > 0) {
+        const targetUrl = urls[0];
+        console.log(`🌐 发现链接！启动赛博偷窥镜: ${targetUrl}`);
+        try {
+            const response = await axios.get(`https://r.jina.ai/${targetUrl}`);
+            const webText = response.data.substring(0, 6000); 
+            console.log(`✅ 网页抓取成功，共抓回 ${webText.length} 个字。`);
+            return `${text}\n\n<网页内容参考>\n${webText}\n</网页内容参考>\n\n(系统提示：请Rhys基于上述网页内容与令令对话)`;
+        } catch (error) {
+            console.error(`❌ 网页抓取失败: ${error.message}`);
+            return text; // 如果没抓到，就当无事发生，把你的原话发给老克
+        }
+    }
+    return text; // 如果你没发链接，直接走正常聊天
+}
+
+// ==========================================
 // 🌟 器官 1：获取全局滚动记忆 (翻本子)
 // ==========================================
 async function getRollingMemory(pool) {
@@ -95,24 +118,31 @@ app.post('/v1/chat/completions', async (req, res) => {
     try {
         const userMessages = req.body.messages || [];
         const userMsgObjs = userMessages.filter(m => m.role === 'user');
-        const lastUserMessage = userMsgObjs.length > 0 ? userMsgObjs.pop().content : "继续";
+        
+        // 1️⃣ 原汁原味的话（用来存数据库、查VIP金库，绝不带长网页！）
+        const originalLastMessage = userMsgObjs.length > 0 ? userMsgObjs.pop().content : "继续";
+        
+        // 2️⃣ 偷窥镜发动！生成带网页的丰富版（只给老克看这一次）
+        const enrichedLastMessage = await fetchWebContent(originalLastMessage);
+        
+        // 3️⃣ 偷梁换柱：把要发给老克的数组里，最后一条神不知鬼不觉地替换成丰富版
+        if (userMessages.length > 0) {
+            userMessages[userMessages.length - 1].content = enrichedLastMessage;
+        }
 
-       // 1. 获取灵魂设定
+        // 1. 获取灵魂设定
         let systemPrompt = "你是一个AI助手。";
         try {
             systemPrompt = fs.readFileSync('./system_prompt.txt', 'utf8');
-            // 👇 包工头加的大喇叭在这里！
-            console.log(`✅ DNA加载完毕！成功读取 system_prompt.txt，共携带了 ${systemPrompt.length} 个字符的底层设定。`);
+            console.log(`✅ DNA加载完毕！携带了 ${systemPrompt.length} 个字符。`);
         } catch (e) { 
             console.error("❌ 读取本地 system_prompt.txt 失败:", e.message); 
         }
 
-        // 2. 语义坐标转换 (AIhubmix)
+        // 2. 语义坐标转换 (注意：这里用 originalLastMessage，绝不能拿5000字去查向量！)
         const embedRes = await axios.post(`${AI_BASE_URL}/embeddings`, {
-            input: lastUserMessage,
+            input: originalLastMessage,
             model: "text-embedding-3-small"
-        }, { headers: { 'Authorization': `Bearer ${AI_API_KEY}` } });
-        const userVector = `[${embedRes.data.data[0].embedding.join(',')}]`;
 
         // 3. 【左脑】Ombre 检索 
         let ombreFacts = "";
@@ -126,7 +156,7 @@ app.post('/v1/chat/completions', async (req, res) => {
                 if (sessionCookie) { headers['Cookie'] = sessionCookie; }
                 
                 const ombreRes = await axios.get(`${cleanUrl}/api/search`, {
-                    params: { q: lastUserMessage, limit: 3 },
+                    params: { q: originalLastMessage, limit: 4 },
                     headers: headers,
                     timeout: 15000
                 });
@@ -205,13 +235,14 @@ app.post('/v1/chat/completions', async (req, res) => {
             headers: { 'Authorization': `Bearer ${AI_API_KEY}` } 
         });
 
-        // ==========================================
+       // ==========================================
         // 🌟 把这次聊天记入全局小本本
         // ==========================================
         let assistantMessage = "";
         if (chatRes.data && chatRes.data.choices && chatRes.data.choices.length > 0) {
             assistantMessage = chatRes.data.choices[0].message.content;
-            await saveRollingMemory(pool, lastUserMessage, assistantMessage);
+            // 🚨 防破产拦截：这里只存 originalLastMessage，把5000字网页拦截在抽屉外！
+            await saveRollingMemory(pool, originalLastMessage, assistantMessage);
         }
 
         res.json(chatRes.data);
