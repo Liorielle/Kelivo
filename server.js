@@ -18,29 +18,6 @@ const pool = new Pool({ connectionString: DB_URL });
 const AI_BASE_URL = "https://aihubmix.com/v1";
 
 // ==========================================
-// 🌟 新增器官：赛博偷窥镜 (网页链接抓取)
-// ==========================================
-async function fetchWebContent(text) {
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const urls = text.match(urlRegex);
-    
-    if (urls && urls.length > 0) {
-        const targetUrl = urls[0];
-        console.log(`🌐 发现链接！启动赛博偷窥镜: ${targetUrl}`);
-        try {
-            const response = await axios.get(`https://r.jina.ai/${targetUrl}`);
-            const webText = response.data.substring(0, 6000); 
-            console.log(`✅ 网页抓取成功，共抓回 ${webText.length} 个字。`);
-            return `${text}\n\n<网页内容参考>\n${webText}\n</网页内容参考>\n\n(系统提示：请Rhys基于上述网页内容与令令对话)`;
-        } catch (error) {
-            console.error(`❌ 网页抓取失败: ${error.message}`);
-            return text; // 如果没抓到，就当无事发生，把你的原话发给老克
-        }
-    }
-    return text; // 如果你没发链接，直接走正常聊天
-}
-
-// ==========================================
 // 🌟 器官 1：获取全局滚动记忆 (翻本子)
 // ==========================================
 async function getRollingMemory(pool) {
@@ -95,10 +72,10 @@ async function getOmbreSession() {
         }
         const cleanUrl = OMBRE_URL.replace(/\/$/, "");
         console.log(`🔐 正在登录 Ombre: ${cleanUrl}/auth/login`);
-        
+
         const loginRes = await axios.post(`${cleanUrl}/auth/login`, { password: OMBRE_PASSWORD });
         const setCookie = loginRes.headers['set-cookie'];
-        
+
         if (setCookie && Array.isArray(setCookie)) {
             ombreSessionCookie = setCookie[0].split(';')[0];
             ombreSessionExpiry = now + 7 * 24 * 60 * 60 * 1000;
@@ -118,34 +95,25 @@ app.post('/v1/chat/completions', async (req, res) => {
     try {
         const userMessages = req.body.messages || [];
         const userMsgObjs = userMessages.filter(m => m.role === 'user');
-        
-        // 1️⃣ 原汁原味的话（用来存数据库、查VIP金库，绝不带长网页！）
-        const originalLastMessage = userMsgObjs.length > 0 ? userMsgObjs.pop().content : "继续";
-        
-        // 2️⃣ 偷窥镜发动！生成带网页的丰富版（只给老克看这一次）
-        const enrichedLastMessage = await fetchWebContent(originalLastMessage);
-        
-        // 3️⃣ 偷梁换柱：把要发给老克的数组里，最后一条神不知鬼不觉地替换成丰富版
-        if (userMessages.length > 0) {
-            userMessages[userMessages.length - 1].content = enrichedLastMessage;
-        }
+        const lastUserMessage = userMsgObjs.length > 0 ? userMsgObjs.pop().content : "继续";
 
         // 1. 获取灵魂设定
+       // 1. 获取灵魂设定
         let systemPrompt = "你是一个AI助手。";
         try {
             systemPrompt = fs.readFileSync('./system_prompt.txt', 'utf8');
-            console.log(`✅ DNA加载完毕！携带了 ${systemPrompt.length} 个字符。`);
+            // 👇 包工头加的大喇叭在这里！
+            console.log(`✅ DNA加载完毕！成功读取 system_prompt.txt，共携带了 ${systemPrompt.length} 个字符的底层设定。`);
         } catch (e) { 
             console.error("❌ 读取本地 system_prompt.txt 失败:", e.message); 
         }
 
-        // 2. 语义坐标转换 (注意：这里用 originalLastMessage，绝不能拿5000字去查向量！)
-       const embedRes = await axios.post(`${AI_BASE_URL}/embeddings`, {
-    input: originalLastMessage,
-    model: "text-embedding-3-small"
-});
-// 👇 添加这一行！
-const userVector = embedRes.data.data[0].embedding;
+        // 2. 语义坐标转换 (AIhubmix)
+        const embedRes = await axios.post(`${AI_BASE_URL}/embeddings`, {
+            input: lastUserMessage,
+            model: "text-embedding-3-small"
+        }, { headers: { 'Authorization': `Bearer ${AI_API_KEY}` } });
+        const userVector = `[${embedRes.data.data[0].embedding.join(',')}]`;
 
         // 3. 【左脑】Ombre 检索 
         let ombreFacts = "";
@@ -153,17 +121,17 @@ const userVector = embedRes.data.data[0].embedding;
             if (OMBRE_URL) {
                 const cleanUrl = OMBRE_URL.replace(/\/$/, "");
                 console.log(`🔍 正在连接 Ombre: ${cleanUrl}/api/search`);
-                
+
                 const sessionCookie = await getOmbreSession();
                 const headers = {};
                 if (sessionCookie) { headers['Cookie'] = sessionCookie; }
-                
+
                 const ombreRes = await axios.get(`${cleanUrl}/api/search`, {
-                    params: { q: originalLastMessage, limit: 4 },
+                    params: { q: lastUserMessage, limit: 3 },
                     headers: headers,
                     timeout: 15000
                 });
-                
+
                 let resultsArray = Array.isArray(ombreRes.data) ? ombreRes.data : (ombreRes.data.data || ombreRes.data.results || []);
                 if (resultsArray.length > 0) {
                     ombreFacts = "\n<Ombre 历史事实>\n" + resultsArray.map(item => item.content_preview || item.content || item.text).join("\n") + "\n</Ombre 历史事实>\n";
@@ -184,7 +152,7 @@ const userVector = embedRes.data.data[0].embedding;
                 `SELECT content FROM rhys_facts WHERE embedding <=> $1 < 0.5 ORDER BY embedding <=> $1 LIMIT 5;`, 
                 [userVector]
             );
-            
+
             if (factRes.rows.length > 0) {
                 vipFacts = "\n<⚠️ Rhys世界观与经历补充>\n" + factRes.rows.map(r => r.content).join("\n") + "\n</⚠️>\n";
                 console.log(`✅ 命中！SQL金库打捞了 ${factRes.rows.length} 条强相关设定！`);
@@ -206,7 +174,7 @@ const userVector = embedRes.data.data[0].embedding;
         // ==========================================
         const realChatCount = userMessages.filter(m => m.role !== 'system').length;
         let finalMessages = [];
-        
+
         if (realChatCount === 1) {
             console.log("🆕 检测到新窗口！正在注入 SQL 全局跨窗记忆 (15轮)...");
             const rollingMemory = await getRollingMemory(pool);
@@ -219,7 +187,7 @@ const userVector = embedRes.data.data[0].embedding;
         // 5. 最终合体发送
         const finalSystemPrompt = systemPrompt + ombreFacts + vipFacts + historyMemory;
         const requestedModel = req.body.model || "claude-3-5-sonnet-20240620";
-        
+
         let chatPayload = {
             model: requestedModel,
             temperature: req.body.temperature || 0.7, 
@@ -238,14 +206,13 @@ const userVector = embedRes.data.data[0].embedding;
             headers: { 'Authorization': `Bearer ${AI_API_KEY}` } 
         });
 
-       // ==========================================
+        // ==========================================
         // 🌟 把这次聊天记入全局小本本
         // ==========================================
         let assistantMessage = "";
         if (chatRes.data && chatRes.data.choices && chatRes.data.choices.length > 0) {
             assistantMessage = chatRes.data.choices[0].message.content;
-            // 🚨 防破产拦截：这里只存 originalLastMessage，把5000字网页拦截在抽屉外！
-            await saveRollingMemory(pool, originalLastMessage, assistantMessage);
+            await saveRollingMemory(pool, lastUserMessage, assistantMessage);
         }
 
         res.json(chatRes.data);
