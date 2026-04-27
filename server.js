@@ -140,9 +140,10 @@ app.post('/v1/chat/completions', async (req, res) => {
         }
 
         // 2. 语义坐标转换 (注意：这里用 originalLastMessage，绝不能拿5000字去查向量！)
-        const embedRes = await axios.post(`${AI_BASE_URL}/embeddings`, {
-            input: originalLastMessage,
-            model: "text-embedding-3-small"
+       const embedRes = await axios.post(`${AI_BASE_URL}/embeddings`, {
+    input: originalLastMessage,
+    model: "text-embedding-3-small"
+});
 
         // 3. 【左脑】Ombre 检索 
         let ombreFacts = "";
