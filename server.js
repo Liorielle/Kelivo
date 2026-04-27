@@ -144,6 +144,8 @@ app.post('/v1/chat/completions', async (req, res) => {
     input: originalLastMessage,
     model: "text-embedding-3-small"
 });
+// 👇 添加这一行！
+const userVector = embedRes.data.data[0].embedding;
 
         // 3. 【左脑】Ombre 检索 
         let ombreFacts = "";
