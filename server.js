@@ -16,7 +16,9 @@ const OMBRE_PASSWORD = process.env.OMBRE_PASSWORD || "";
 
 const pool = new Pool({ connectionString: DB_URL });
 const AI_BASE_URL = "https://aihubmix.com/v1";
-
+// 👇 包工头新增：专门用来聊天的“新网线”和“新钥匙”
+const CHAT_API_URL = process.env.CHAT_API_URL || AI_BASE_URL;
+const CHAT_API_KEY = process.env.CHAT_API_KEY || AI_API_KEY;
 // ==========================================
 // 🌟 器官 1：获取全局滚动记忆 (翻本子)
 // ==========================================
@@ -201,9 +203,9 @@ app.post('/v1/chat/completions', async (req, res) => {
             chatPayload.messages = [{ role: "system", content: finalSystemPrompt }, ...finalMessages]; 
         }
 
-        // 👇 就是这句向大模型发请求的代码刚才被你不小心删掉啦！现在它回来了！
-        const chatRes = await axios.post(`${AI_BASE_URL}/chat/completions`, chatPayload, { 
-            headers: { 'Authorization': `Bearer ${AI_API_KEY}` } 
+        // 👇 走新网线！去新的中转站找老克！
+        const chatRes = await axios.post(`${CHAT_API_URL}/chat/completions`, chatPayload, { 
+            headers: { 'Authorization': `Bearer ${CHAT_API_KEY}` } 
         });
 
         // ==========================================
