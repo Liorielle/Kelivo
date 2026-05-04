@@ -188,7 +188,7 @@ app.post('/v1/chat/completions', async (req, res) => {
 
         // 5. 最终合体发送
         const finalSystemPrompt = systemPrompt + ombreFacts + vipFacts + historyMemory;
-        const requestedModel = req.body.model || "claude-3-5-sonnet-20240620";
+        const requestedModel = req.body.model || "DeepSeek-V3.2-Exp";
 
         let chatPayload = {
             model: requestedModel,
