@@ -231,3 +231,17 @@ app.post('/v1/chat/completions', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log(`🚀 Rhys 究极中枢在端口 ${PORT} 运行！`); });
+// 在server.js末尾添加
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', service: 'Kelivo Gateway' });
+});
+
+app.get('/v1/models', (req, res) => {
+    res.json({
+        data: [{
+            id: "claude-3-5-sonnet-20240620",
+            object: "model",
+            created: Date.now()
+        }]
+    });
+});
