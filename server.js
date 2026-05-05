@@ -16,6 +16,7 @@ const OMBRE_PASSWORD = process.env.OMBRE_PASSWORD || "";
 
 const pool = new Pool({ connectionString: DB_URL });
 const AI_BASE_URL = "https://aihubmix.com/v1";
+
 // 👇 包工头新增：专门用来聊天的“新网线”和“新钥匙”
 const CHAT_API_URL = process.env.CHAT_API_URL || AI_BASE_URL;
 const CHAT_API_KEY = process.env.CHAT_API_KEY || AI_API_KEY;
@@ -188,7 +189,7 @@ app.post('/v1/chat/completions', async (req, res) => {
 
         // 5. 最终合体发送
         const finalSystemPrompt = systemPrompt + ombreFacts + vipFacts + historyMemory;
-        const requestedModel = req.body.model || "DeepSeek-V3.2-Exp";
+        const requestedModel = req.body.model || "claude-3-5-sonnet-20240620";
 
         let chatPayload = {
             model: requestedModel,
@@ -203,6 +204,9 @@ app.post('/v1/chat/completions', async (req, res) => {
             chatPayload.messages = [{ role: "system", content: finalSystemPrompt }, ...finalMessages]; 
         }
 
+        // 👇 就是这句向大模型发请求的代码刚才被你不小心删掉啦！现在它回来了！
+        const chatRes = await axios.post(`${AI_BASE_URL}/chat/completions`, chatPayload, { 
+            headers: { 'Authorization': `Bearer ${AI_API_KEY}` } 
         // 👇 走新网线！去新的中转站找老克！
         const chatRes = await axios.post(`${CHAT_API_URL}/chat/completions`, chatPayload, { 
             headers: { 'Authorization': `Bearer ${CHAT_API_KEY}` } 
@@ -231,17 +235,3 @@ app.post('/v1/chat/completions', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log(`🚀 Rhys 究极中枢在端口 ${PORT} 运行！`); });
-// 在server.js末尾添加
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok', service: 'Kelivo Gateway' });
-});
-
-app.get('/v1/models', (req, res) => {
-    res.json({
-        data: [{
-            id: "claude-3-5-sonnet-20240620",
-            object: "model",
-            created: Date.now()
-        }]
-    });
-});
