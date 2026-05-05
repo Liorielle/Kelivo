@@ -204,9 +204,6 @@ app.post('/v1/chat/completions', async (req, res) => {
             chatPayload.messages = [{ role: "system", content: finalSystemPrompt }, ...finalMessages]; 
         }
 
-        // 👇 就是这句向大模型发请求的代码刚才被你不小心删掉啦！现在它回来了！
-        const chatRes = await axios.post(`${AI_BASE_URL}/chat/completions`, chatPayload, { 
-            headers: { 'Authorization': `Bearer ${AI_API_KEY}` } 
         // 👇 走新网线！去新的中转站找老克！
         const chatRes = await axios.post(`${CHAT_API_URL}/chat/completions`, chatPayload, { 
             headers: { 'Authorization': `Bearer ${CHAT_API_KEY}` } 
